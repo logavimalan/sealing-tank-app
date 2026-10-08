@@ -161,4 +161,136 @@ with tab_entry:
   time_col1, time_col2 = st.columns(2)
   with time_col1:
     time_in = st.text_input(
-        "T.IN (Time In) *", value=datetime
+        "T.IN (Time In) *", value=datetime.now().strftime("%H:%M")
+    )
+  with time_col2:
+    time_out = st.text_input("PART OUT (Time Out) *")
+
+  st.markdown("---")
+  st.subheader("4. Process Reading Log")
+
+  r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns(5)
+  with r_col1:
+    check_time = st.text_input(
+        "Time *", value=datetime.now().strftime("%H:%M")
+    )
+  with r_col2:
+    temp_val = st.number_input(
+        "Temp (°C)", min_value=0.0, max_value=120.0, step=0.1, format="%.1f"
+    )
+  with r_col3:
+    ph_b_val = st.number_input(
+        "pH Before Adj", min_value=0.0, max_value=14.0, step=0.01, format="%.2f"
+    )
+  with r_col4:
+    buf_val = st.text_input("Buffer Added")
+  with r_col5:
+    ph_a_val = st.number_input(
+        "pH After Adj", min_value=0.0, max_value=14.0, step=0.01, format="%.2f"
+    )
+
+  st.markdown("---")
+  st.subheader("5. Operator Verification")
+  operator_sig = st.text_input("Operator Name / Badge ID *")
+
+  if st.button("Submit Sealing Record", type="primary"):
+    if not tir_inputs:
+      st.error("Please fill in at least one TIR NO and Quantity.")
+    elif not operator_sig or not time_in or not time_out or not check_time:
+      st.error(
+          "Please complete all required fields (Operator Name, T.IN, PART OUT,"
+          " Reading Time)."
+      )
+    else:
+      try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+                INSERT INTO sealing_records_v3 
+                (record_date, shift, tank_id, time_in, time_out, sealing_hr, operator_signature,
+                 check_time, temperature_c, ph_before, buffer_added, ph_after)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(record_date),
+                shift,
+                selected_tank,
+                time_in,
+                time_out,
+                sealing_hr,
+                operator_sig,
+                check_time,
+                temp_val if temp_val > 0 else None,
+                ph_b_val if ph_b_val > 0 else None,
+                buf_val,
+                ph_a_val if ph_a_val > 0 else None,
+            ),
+        )
+        rec_id = cursor.lastrowid
+
+        for item in tir_inputs:
+          cursor.execute(
+              """
+                    INSERT INTO sealing_tir_entries_v3 (record_id, tir_number, quantity)
+                    VALUES (?, ?, ?)
+                """,
+              (rec_id, item["tir"], item["qty"]),
+          )
+
+        conn.commit()
+        conn.close()
+        st.success(f"Sealing Record #{rec_id} successfully saved!")
+      except Exception as e:
+        st.error(f"Error saving record: {e}")
+
+# ---------------------------------------------------------
+# TAB 2: VIEW & SEARCH HISTORICAL RECORDS
+# ---------------------------------------------------------
+with tab_view:
+  st.title("📊 Sealing Records Database")
+
+  conn = get_db_connection()
+  search_q = st.text_input("🔍 Filter by TIR Number")
+
+  query = """
+        SELECT 
+            r.record_id AS 'Record ID',
+            r.record_date AS 'Date',
+            r.shift AS 'Shift',
+            r.tank_id AS 'Tank',
+            t.tir_number AS 'TIR No',
+            t.quantity AS 'Qty',
+            r.time_in AS 'Time IN',
+            r.time_out AS 'Part OUT',
+            r.sealing_hr AS 'Duration',
+            r.check_time AS 'Log Time',
+            r.temperature_c AS 'Temp (°C)',
+            r.ph_before AS 'pH Before',
+            r.buffer_added AS 'Buffer Added',
+            r.ph_after AS 'pH After',
+            r.operator_signature AS 'Operator'
+        FROM sealing_records_v3 r
+        JOIN sealing_tir_entries_v3 t ON r.record_id = t.record_id
+    """
+
+  if search_q:
+    query += f" WHERE t.tir_number LIKE '%{search_q}%'"
+
+  query += " ORDER BY r.record_id DESC"
+
+  df = pd.read_sql_query(query, conn)
+  conn.close()
+
+  if not df.empty:
+    st.dataframe(df, width="stretch")
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 Download Records as CSV",
+        data=csv,
+        file_name="hard_anodize_sealing_records.csv",
+        mime="text/csv",
+    )
+  else:
+    st.info("No sealing records found.")
