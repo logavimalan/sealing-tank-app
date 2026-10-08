@@ -6,6 +6,74 @@ import streamlit as st
 DB_NAME = "ANO2 SEALING TANK RECORD.db"
 
 
+def init_db():
+  """Automatically creates tables and populates tank defaults if missing."""
+  conn = sqlite3.connect(DB_NAME)
+  cursor = conn.cursor()
+
+  cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tanks (
+            tank_id TEXT PRIMARY KEY,
+            line_name TEXT NOT NULL,
+            di_water_vol_l REAL,
+            chem_vol_l REAL
+        );
+    """)
+
+  cursor.execute("SELECT COUNT(*) FROM tanks")
+  if cursor.fetchone()[0] == 0:
+    tanks_data = [
+        ("Tank 24", "Anodizing Line-1", 1400.0, 2.8),
+        ("Tank 25", "Anodizing Line-1", 1400.0, 2.8),
+        ("Tank 26", "Anodizing Line-1", 1400.0, 2.8),
+        ("Tank 27", "Anodizing Line-1", 1400.0, 2.8),
+        ("Tank 51", "Anodizing Line-2", 4330.0, 8.7),
+        ("Tank 53", "Anodizing Line-2", 4330.0, 8.7),
+        ("Tank 54", "Anodizing Line-2", 4330.0, 8.7),
+        ("Tank 55", "Anodizing Line-2", 2850.0, 5.7),
+        ("Tank 56", "Anodizing Line-2", 2850.0, 5.7),
+        ("Tank 57", "Anodizing Line-2", 2850.0, 5.7),
+        ("Tank 58", "Anodizing Line-2", 2850.0, 5.7),
+    ]
+    cursor.executemany(
+        "INSERT INTO tanks VALUES (?, ?, ?, ?)", tanks_data
+    )
+
+  cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sealing_records (
+            record_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            part_name TEXT NOT NULL,
+            record_date TEXT NOT NULL,
+            tir_number TEXT NOT NULL,
+            sealing_hr TEXT CHECK (sealing_hr IN ('20hr', '8hr', '6hr', '3hr')),
+            quantity INTEGER NOT NULL,
+            tank_id TEXT REFERENCES tanks(tank_id),
+            operator_signature TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+  cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sealing_log_entries (
+            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_id INTEGER REFERENCES sealing_records(record_id) ON DELETE CASCADE,
+            entry_no INTEGER CHECK (entry_no BETWEEN 1 AND 10),
+            check_time TEXT NOT NULL,
+            ph_level REAL,
+            temperature_c REAL,
+            bath_makeup TEXT,
+            resistivity REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+  conn.commit()
+  conn.close()
+
+
+init_db()
+
+
 def get_db_connection():
   conn = sqlite3.connect(DB_NAME)
   conn.row_factory = sqlite3.Row
@@ -16,14 +84,10 @@ st.set_page_config(
     page_title="Hot DI Water Sealing Record", page_icon="🧪", layout="wide"
 )
 
-# Top Navigation Tabs
 tab_entry, tab_view = st.tabs(
     ["📝 New Record Entry", "📊 Check & Search Records"]
 )
 
-# ---------------------------------------------------------
-# TAB 1: RECORD ENTRY FORM
-# ---------------------------------------------------------
 with tab_entry:
   st.title("🧪 Hot DI Water Sealing Record Entry (RPFRM-56)")
   st.caption("Richport Technology Production Form")
@@ -178,14 +242,10 @@ with tab_entry:
       except Exception as e:
         st.error(f"Error saving record: {e}")
 
-# ---------------------------------------------------------
-# TAB 2: VIEW & SEARCH HISTORICAL RECORDS
-# ---------------------------------------------------------
 with tab_view:
   st.title("📊 Sealing Records Database")
 
   conn = get_db_connection()
-
   search_tir = st.text_input("🔍 Filter by TIR Number or Part Name")
 
   query = """
@@ -217,7 +277,7 @@ with tab_view:
   conn.close()
 
   if not df.empty:
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(
@@ -228,6 +288,3 @@ with tab_view:
     )
   else:
     st.info("No sealing records found matching your query.")
-    st.dataframe(df, width="stretch")
-    Python
-st.dataframe(df, use_container_width=True)
