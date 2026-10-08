@@ -228,3 +228,6 @@ with tab_view:
     )
   else:
     st.info("No sealing records found matching your query.")
+    st.dataframe(df, width="stretch")
+    Python
+st.dataframe(df, use_container_width=True)
