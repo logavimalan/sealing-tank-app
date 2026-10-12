@@ -7,13 +7,14 @@ DB_NAME = "ANO2 SEALING TANK RECORD.db"
 
 
 def init_db():
-  """Creates updated tables and pre-populates tank data."""
+  """Creates updated tables and forces tank data refresh."""
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  # Tank Master Table
+  # 1. Force drop and recreate Tanks table to ensure only Line-2 tanks exist
+  cursor.execute("DROP TABLE IF EXISTS tanks")
   cursor.execute("""
-        CREATE TABLE IF NOT EXISTS tanks (
+        CREATE TABLE tanks (
             tank_id TEXT PRIMARY KEY,
             line_name TEXT NOT NULL,
             di_water_vol_l REAL,
@@ -21,27 +22,22 @@ def init_db():
         );
     """)
 
-  cursor.execute("SELECT COUNT(*) FROM tanks")
-  if cursor.fetchone()[0] == 0:
-    tanks_data = [
-        ("Tank 24", "Anodizing Line-1", 1400.0, 2.8),
-        ("Tank 25", "Anodizing Line-1", 1400.0, 2.8),
-        ("Tank 26", "Anodizing Line-1", 1400.0, 2.8),
-        ("Tank 27", "Anodizing Line-1", 1400.0, 2.8),
-        ("Tank 51", "Anodizing Line-2", 4330.0, 8.7),
-        ("Tank 53/54", "Anodizing Line-2", 4330.0, 8.7),
-        ("Tank 55", "Anodizing Line-2", 2850.0, 5.7),
-        ("Tank 56", "Anodizing Line-2", 2850.0, 5.7),
-        ("Tank 57", "Anodizing Line-2", 2850.0, 5.7),
-        ("Tank 58", "Anodizing Line-2", 2850.0, 5.7),
-    ]
-    cursor.executemany(
-        "INSERT INTO tanks VALUES (?, ?, ?, ?)", tanks_data
-    )
+  # Pre-populate only the requested Anodizing Line-2 tanks
+  tanks_data = [
+      ("Tank 51", "Anodizing Line-2", 4330.0, 8.7),
+      ("Tank 52", "Anodizing Line-2", 4330.0, 8.7),
+      ("Tank 53", "Anodizing Line-2", 4330.0, 8.7),
+      ("Tank 54", "Anodizing Line-2", 4330.0, 8.7),
+      ("Tank 55", "Anodizing Line-2", 2850.0, 5.7),
+      ("Tank 56", "Anodizing Line-2", 2850.0, 5.7),
+      ("Tank 57", "Anodizing Line-2", 2850.0, 5.7),
+      ("Tank 58", "Anodizing Line-2", 2850.0, 5.7),
+  ]
+  cursor.executemany("INSERT INTO tanks VALUES (?, ?, ?, ?)", tanks_data)
 
-  # Master Sealing Header
+  # 2. Master Sealing Header (v4 to avoid schema conflicts)
   cursor.execute("""
-        CREATE TABLE IF NOT EXISTS sealing_records_v3 (
+        CREATE TABLE IF NOT EXISTS sealing_records_v4 (
             record_id INTEGER PRIMARY KEY AUTOINCREMENT,
             record_date TEXT NOT NULL,
             shift TEXT NOT NULL,
@@ -52,18 +48,18 @@ def init_db():
             operator_signature TEXT NOT NULL,
             check_time TEXT NOT NULL,
             temperature_c REAL,
-            ph_before REAL,
-            buffer_added TEXT,
-            ph_after REAL,
+            ph_level REAL,
+            bath_makeup TEXT,
+            resistivity REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
 
-  # Dedicated TIR & Quantity Table (One-to-Many)
+  # 3. Dedicated TIR & Quantity Table
   cursor.execute("""
-        CREATE TABLE IF NOT EXISTS sealing_tir_entries_v3 (
+        CREATE TABLE IF NOT EXISTS sealing_tir_entries_v4 (
             tir_entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            record_id INTEGER REFERENCES sealing_records_v3(record_id) ON DELETE CASCADE,
+            record_id INTEGER REFERENCES sealing_records_v4(record_id) ON DELETE CASCADE,
             tir_number TEXT NOT NULL,
             quantity INTEGER NOT NULL
         );
@@ -101,7 +97,7 @@ with tab_entry:
 
   conn = get_db_connection()
   tanks_query = conn.execute(
-      "SELECT tank_id, line_name, di_water_vol_l, chem_vol_l FROM tanks"
+      "SELECT tank_id, line_name, di_water_vol_l, chem_vol_l FROM tanks ORDER BY tank_id ASC"
   ).fetchall()
   conn.close()
 
@@ -125,9 +121,10 @@ with tab_entry:
   if selected_tank:
     spec = tank_dict[selected_tank]
     st.info(
-        f"**Line:** {spec['line_name']} | **DI Water Vol:**"
-        f" {spec['di_water_vol_l']} L | **Target Chem Vol:**"
-        f" {spec['chem_vol_l']} L | **Specs:** pH 6.40–6.50 | Temp > 98.5°C"
+        f"**Line:** {spec['line_name']} | "
+        f"**Makeup Chemical:** 2 ml/L | "
+        f"**DI Water Vol:** {spec['di_water_vol_l']} L | "
+        f"**Target Chem Vol:** {spec['chem_vol_l']} L"
     )
 
   st.markdown("---")
@@ -179,14 +176,14 @@ with tab_entry:
         "Temp (°C)", min_value=0.0, max_value=120.0, step=0.1, format="%.1f"
     )
   with r_col3:
-    ph_b_val = st.number_input(
-        "pH Before Adj", min_value=0.0, max_value=14.0, step=0.01, format="%.2f"
+    ph_val = st.number_input(
+        "pH", min_value=0.0, max_value=14.0, step=0.01, format="%.2f"
     )
   with r_col4:
-    buf_val = st.text_input("Buffer Added")
+    bath_makeup = st.text_input("Bath Makeup")
   with r_col5:
-    ph_a_val = st.number_input(
-        "pH After Adj", min_value=0.0, max_value=14.0, step=0.01, format="%.2f"
+    resistivity = st.number_input(
+        "Resistivity", min_value=0.0, step=0.1, format="%.2f"
     )
 
   st.markdown("---")
@@ -198,8 +195,7 @@ with tab_entry:
       st.error("Please fill in at least one TIR NO and Quantity.")
     elif not operator_sig or not time_in or not time_out or not check_time:
       st.error(
-          "Please complete all required fields (Operator Name, T.IN, PART OUT,"
-          " Reading Time)."
+          "Please complete all required fields (Operator Name, T.IN, PART OUT, Reading Time)."
       )
     else:
       try:
@@ -208,9 +204,9 @@ with tab_entry:
 
         cursor.execute(
             """
-                INSERT INTO sealing_records_v3 
+                INSERT INTO sealing_records_v4
                 (record_date, shift, tank_id, time_in, time_out, sealing_hr, operator_signature,
-                 check_time, temperature_c, ph_before, buffer_added, ph_after)
+                 check_time, temperature_c, ph_level, bath_makeup, resistivity)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -223,9 +219,9 @@ with tab_entry:
                 operator_sig,
                 check_time,
                 temp_val if temp_val > 0 else None,
-                ph_b_val if ph_b_val > 0 else None,
-                buf_val,
-                ph_a_val if ph_a_val > 0 else None,
+                ph_val if ph_val > 0 else None,
+                bath_makeup,
+                resistivity if resistivity > 0 else None,
             ),
         )
         rec_id = cursor.lastrowid
@@ -233,7 +229,7 @@ with tab_entry:
         for item in tir_inputs:
           cursor.execute(
               """
-                    INSERT INTO sealing_tir_entries_v3 (record_id, tir_number, quantity)
+                    INSERT INTO sealing_tir_entries_v4 (record_id, tir_number, quantity)
                     VALUES (?, ?, ?)
                 """,
               (rec_id, item["tir"], item["qty"]),
@@ -267,12 +263,12 @@ with tab_view:
             r.sealing_hr AS 'Duration',
             r.check_time AS 'Log Time',
             r.temperature_c AS 'Temp (°C)',
-            r.ph_before AS 'pH Before',
-            r.buffer_added AS 'Buffer Added',
-            r.ph_after AS 'pH After',
+            r.ph_level AS 'pH',
+            r.bath_makeup AS 'Bath Makeup',
+            r.resistivity AS 'Resistivity',
             r.operator_signature AS 'Operator'
-        FROM sealing_records_v3 r
-        JOIN sealing_tir_entries_v3 t ON r.record_id = t.record_id
+        FROM sealing_records_v4 r
+        JOIN sealing_tir_entries_v4 t ON r.record_id = t.record_id
     """
 
   if search_q:
