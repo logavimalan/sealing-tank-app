@@ -145,18 +145,34 @@ with tab_entry:
 
     st.markdown("---")
     st.subheader("3. Timing Details")
-    time_col1, time_col2 = st.columns(2)
-    with time_col1:
-        time_in = st.text_input("T.IN (Time In) *", value=datetime.now().strftime("%H:%M"))
-    with time_col2:
-        time_out = st.text_input("PART OUT (Time Out) *")
+    
+    # 12-hour format for the preset values
+    current_time_12 = datetime.now().strftime("%I:%M")
+    current_ampm = datetime.now().strftime("%p")
+    ampm_index = 0 if current_ampm == "AM" else 1
+
+    tc1, tc2, tc3, tc4 = st.columns([2, 1, 2, 1])
+    with tc1:
+        time_in_val = st.text_input("PART IN *", value=current_time_12)
+    with tc2:
+        in_ampm = st.selectbox("AM/PM", ["AM", "PM"], index=ampm_index, key="in_ampm")
+    with tc3:
+        time_out_val = st.text_input("PART OUT *")
+    with tc4:
+        out_ampm = st.selectbox("AM/PM", ["AM", "PM"], index=ampm_index, key="out_ampm")
+
+    # Combine values for database 
+    time_in = f"{time_in_val} {in_ampm}" if time_in_val.strip() else ""
+    time_out = f"{time_out_val} {out_ampm}" if time_out_val.strip() else ""
 
     st.markdown("---")
     st.subheader("4. Process Reading Log")
 
-    r_col1, r_col2, r_col3, r_col4, r_col5, r_col6 = st.columns(6)
+    r_col1, r_col_ap, r_col2, r_col3, r_col4, r_col5, r_col6 = st.columns([1.2, 1, 1.2, 1.2, 1.2, 1.2, 1.2])
     with r_col1:
-        check_time = st.text_input("Time *", value=datetime.now().strftime("%H:%M"))
+        check_time_val = st.text_input("Time *", value=current_time_12)
+    with r_col_ap:
+        chk_ampm = st.selectbox("AM/PM", ["AM", "PM"], index=ampm_index, key="chk_ampm")
     with r_col2:
         temp_val = st.number_input("Temp (°C)", min_value=0.0, max_value=120.0, step=0.1, format="%.1f")
     with r_col3:
@@ -167,6 +183,9 @@ with tab_entry:
         ph_after = st.number_input("pH After Adj", min_value=0.0, max_value=14.0, step=0.01, format="%.2f")
     with r_col6:
         resistivity = st.number_input("Resistivity", min_value=0.0, step=0.1, format="%.2f")
+    
+    # Combine values for database
+    check_time = f"{check_time_val} {chk_ampm}" if check_time_val.strip() else ""
 
     st.markdown("---")
     st.subheader("5. Operator Verification")
@@ -175,8 +194,8 @@ with tab_entry:
     if st.button("Submit Sealing Record", type="primary"):
         if not tir_inputs:
             st.error("Please fill in at least one Part Number, TIR NO and Quantity.")
-        elif not operator_sig or not time_in or not time_out or not check_time:
-            st.error("Please complete all required fields (Operator Name, T.IN, PART OUT, Reading Time).")
+        elif not operator_sig or not time_in_val or not time_out_val or not check_time_val:
+            st.error("Please complete all required fields (Operator Name, PART IN, PART OUT, Reading Time).")
         else:
             try:
                 conn = get_db_connection()
@@ -221,8 +240,8 @@ with tab_view:
             t.part_number AS 'Part Number',
             t.tir_number AS 'TIR No',
             t.quantity AS 'Qty',
-            r.time_in AS 'Time IN',
-            r.time_out AS 'Part OUT',
+            r.time_in AS 'PART IN',
+            r.time_out AS 'PART OUT',
             r.sealing_hr AS 'Duration',
             r.check_time AS 'Log Time',
             r.temperature_c AS 'Temp (°C)',
