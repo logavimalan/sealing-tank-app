@@ -79,4 +79,6 @@ def get_db_connection():
 
 st.set_page_config(
     page_title="Hard Anodize Hot DI Water Seal Record",
-    page_icon
+    page_icon="🧪",
+    layout="wide",
+)
