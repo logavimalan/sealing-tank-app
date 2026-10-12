@@ -31,8 +31,9 @@ def init_db():
     ]
     cursor.executemany("INSERT INTO tanks VALUES (?, ?, ?, ?)", tanks_data)
 
+    # Updated to v6 to include the new Process Reading Log columns
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS sealing_records_v5 (
+        CREATE TABLE IF NOT EXISTS sealing_records_v6 (
             record_id INTEGER PRIMARY KEY AUTOINCREMENT,
             record_date TEXT NOT NULL,
             shift TEXT NOT NULL,
@@ -43,17 +44,18 @@ def init_db():
             operator_signature TEXT NOT NULL,
             check_time TEXT NOT NULL,
             temperature_c REAL,
-            ph_level REAL,
-            bath_makeup TEXT,
+            ph_before REAL,
+            buffer_added TEXT,
+            ph_after REAL,
             resistivity REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS sealing_tir_entries_v5 (
+        CREATE TABLE IF NOT EXISTS sealing_tir_entries_v6 (
             tir_entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            record_id INTEGER REFERENCES sealing_records_v5(record_id) ON DELETE CASCADE,
+            record_id INTEGER REFERENCES sealing_records_v6(record_id) ON DELETE CASCADE,
             part_number TEXT NOT NULL,
             tir_number TEXT NOT NULL,
             quantity INTEGER NOT NULL
@@ -70,7 +72,6 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-# THE FIX: Properly closed page config
 st.set_page_config(
     page_title="Hard Anodize Hot DI Water Seal Record",
     page_icon="🧪",
@@ -154,100 +155,13 @@ with tab_entry:
     st.markdown("---")
     st.subheader("4. Process Reading Log")
 
-    r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns(5)
+    # Adjusted to 6 columns based on your request
+    r_col1, r_col2, r_col3, r_col4, r_col5, r_col6 = st.columns(6)
     with r_col1:
         check_time = st.text_input("Time *", value=datetime.now().strftime("%H:%M"))
     with r_col2:
         temp_val = st.number_input("Temp (°C)", min_value=0.0, max_value=120.0, step=0.1, format="%.1f")
     with r_col3:
-        ph_val = st.number_input("pH", min_value=0.0, max_value=14.0, step=0.01, format="%.2f")
+        ph_before = st.number_input("pH Before Adj", min_value=0.0, max_value=14.0, step=0.01, format="%.2f")
     with r_col4:
-        bath_makeup = st.text_input("Bath Makeup")
-    with r_col5:
-        resistivity = st.number_input("Resistivity", min_value=0.0, step=0.1, format="%.2f")
-
-    st.markdown("---")
-    st.subheader("5. Operator Verification")
-    operator_sig = st.text_input("Operator Name / Badge ID *")
-
-    if st.button("Submit Sealing Record", type="primary"):
-        if not tir_inputs:
-            st.error("Please fill in at least one Part Number, TIR NO and Quantity.")
-        elif not operator_sig or not time_in or not time_out or not check_time:
-            st.error("Please complete all required fields (Operator Name, T.IN, PART OUT, Reading Time).")
-        else:
-            try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    INSERT INTO sealing_records_v5
-                    (record_date, shift, tank_id, time_in, time_out, sealing_hr, operator_signature,
-                     check_time, temperature_c, ph_level, bath_makeup, resistivity)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(record_date), shift, selected_tank, time_in, time_out, sealing_hr, operator_sig,
-                    check_time, temp_val if temp_val > 0 else None, ph_val if ph_val > 0 else None,
-                    bath_makeup, resistivity if resistivity > 0 else None
-                ))
-                rec_id = cursor.lastrowid
-
-                for item in tir_inputs:
-                    cursor.execute("""
-                        INSERT INTO sealing_tir_entries_v5 (record_id, part_number, tir_number, quantity)
-                        VALUES (?, ?, ?, ?)
-                    """, (rec_id, item["part"], item["tir"], item["qty"]))
-
-                conn.commit()
-                conn.close()
-                st.success(f"Sealing Record #{rec_id} successfully saved!")
-            except Exception as e:
-                st.error(f"Error saving record: {e}")
-
-with tab_view:
-    st.title("📊 Sealing Records Database")
-
-    conn = get_db_connection()
-    search_q = st.text_input("🔍 Filter by TIR Number or Part Number")
-
-    query = """
-        SELECT 
-            r.record_id AS 'Record ID',
-            r.record_date AS 'Date',
-            r.shift AS 'Shift',
-            r.tank_id AS 'Tank',
-            t.part_number AS 'Part Number',
-            t.tir_number AS 'TIR No',
-            t.quantity AS 'Qty',
-            r.time_in AS 'Time IN',
-            r.time_out AS 'Part OUT',
-            r.sealing_hr AS 'Duration',
-            r.check_time AS 'Log Time',
-            r.temperature_c AS 'Temp (°C)',
-            r.ph_level AS 'pH',
-            r.bath_makeup AS 'Bath Makeup',
-            r.resistivity AS 'Resistivity',
-            r.operator_signature AS 'Operator'
-        FROM sealing_records_v5 r
-        JOIN sealing_tir_entries_v5 t ON r.record_id = t.record_id
-    """
-
-    if search_q:
-        query += f" WHERE t.tir_number LIKE '%{search_q}%' OR t.part_number LIKE '%{search_q}%'"
-
-    query += " ORDER BY r.record_id DESC"
-
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-
-    if not df.empty:
-        st.dataframe(df, width="stretch")
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="📥 Download Records as CSV",
-            data=csv,
-            file_name="hard_anodize_sealing_records.csv",
-            mime="text/csv",
-        )
-    else:
-        st.info("No sealing records found.")
+        buffer_added
